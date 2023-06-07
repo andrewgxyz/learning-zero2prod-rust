@@ -1,10 +1,9 @@
 use std::{net::TcpListener, format};
-use sqlx::PgPool;
-use zero2prod::configuration::get_config;
+use sqlx::{PgPool, PgConnection, Connection, Executor};
+use zero2prod::configuration::{get_config, DatabaseSettings};
 use zero2prod::startup::run;
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;
-use secrecy::ExposeSecret;
 
 static TRACING: Lazy<()> = Lazy::new(|| {
     let default_filter_level = "into".to_string();
@@ -24,6 +23,25 @@ pub struct TestApp {
     pub db_pool: PgPool
 }
 
+pub async fn config_db(config: &DatabaseSettings) -> PgPool {
+    let mut db = PgConnection::connect_with(&config.without_db())
+        .await
+        .expect("Failed to connect to Postgres");
+
+    db.execute(format!("CREATE DATABASE {};", config.database_name).as_str()).await.expect("Failed to create database");
+
+    let db_pool = PgPool::connect_with(config.with_db())
+        .await
+        .expect("Failed to connect to Postgres");
+
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await
+        .expect("Failed to migrate the database");
+
+    db_pool
+}
+
 async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
 
@@ -32,9 +50,6 @@ async fn spawn_app() -> TestApp {
     let addr = format!("http://127.0.0.1:{}", port);
 
     let config = get_config().expect("Failed to read configuration");
-    let db_pool = PgPool::connect(&config.database.connection_string().expose_secret())
-        .await
-        .expect("Failed to connect to Postgres");
 
     let server = run(listen, db_pool.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
