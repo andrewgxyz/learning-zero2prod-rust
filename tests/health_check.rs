@@ -51,6 +51,10 @@ async fn spawn_app() -> TestApp {
 
     let config = get_config().expect("Failed to read configuration");
 
+    let db_pool = PgPool::connect_with(config.database.with_db())
+        .await
+        .expect("Failed to connect to Postgres");
+
     let server = run(listen, db_pool.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
 
@@ -76,11 +80,34 @@ async fn health_check_works() {
 }
 
 #[tokio::test]
+async fn subscribe_returns_a_400_when_fields_are_present_but_empty() {
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=&email=ursela_le_guin%40gmail.com", "empty name"),
+        ("name=Andrew&email=", "empty email"),
+        ("name=andrew&email=ursela_le_guin", "invalid email"),
+    ];
+
+    for (body, description) in test_cases {
+        let res = client
+            .post(format!("{}/subscribe", &app.addr))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+        assert_eq!(400, res.status().as_u16(), "The API did not return a 400 OK when the payloa was {}", description);
+    }
+}
+
+#[tokio::test]
 async fn subscribe_returns_a_200_form_data() {
     let app = spawn_app().await;
     let client = reqwest::Client::new();
 
-    let body = "name=Andrew%20Gristey&email=andrew.gristey%40gmail.com";
+    let body = "name=Andrew%20G&email=andrew.g%40gmail.com";
     let res = client
         .post(format!("{}/subscribe", &app.addr))
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -96,8 +123,8 @@ async fn subscribe_returns_a_200_form_data() {
         .await
         .expect("Failed to fetch saved subscription.");
 
-    assert_eq!(saved.name, "Andrew Gristey");
-    assert_eq!(saved.email, "andrew.gristey@gmail.com");
+    assert_eq!(saved.name, "Andrew G");
+    assert_eq!(saved.email, "andrew.g@gmail.com");
 }
 
 #[tokio::test]

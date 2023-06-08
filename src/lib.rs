@@ -2,6 +2,7 @@ use std::fs::Metadata;
 use tracing::log::Record;
 
 pub mod configuration;
+pub mod domain;
 pub mod routes;
 pub mod startup;
 pub mod telemetry;
